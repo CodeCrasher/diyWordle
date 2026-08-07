@@ -1764,6 +1764,13 @@
       0%,80%,100% { transform: scale(0.6); opacity: 0.4; }
       40%         { transform: scale(1);   opacity: 1;   }
     }
+    /* Host-only escape hatch on the wait screen: move a stalled picker along
+       without waiting out the pick clock. Hidden for everyone but the host. */
+    #chooserSkipBtn {
+      display: block; margin: 18px auto 0;
+      font-size: 0.88rem; padding: 10px 18px;
+    }
+    #chooserSkipBtn:disabled { opacity: 0.5; cursor: not-allowed; }
     /* Phase 1 — live standings on the "X is choosing…" wait screen */
     .wait-standings-wrap { margin-top: 18px; }
     .wait-standings-title {
@@ -2461,6 +2468,9 @@
               </div>
               <p id="chooserWaitRound" class="chooser-round-label">Round 1</p>
               <div class="chooser-countdown hidden" id="chooserWaitCountdown"></div>
+              <button id="chooserSkipBtn" class="btn btn-ghost hidden" type="button">
+                Skip <span id="chooserSkipName">this player</span> →
+              </button>
             </div>
             <div class="wait-standings-wrap">
               <p class="wait-standings-title">Standings</p>
@@ -2721,6 +2731,7 @@
       // Round-end → next-round handoff. The leaderboard persists until the player
       // taps to continue or the next round starts; these track that pending state.
       pendingChoosing: null,   // stashed game:choosingWord payload while on the leaderboard
+      choosing: null,          // who's picking right now — drives the host-skip button
       leaderboardTapped: false, // player tapped "continue" before choosing was announced
       isFinalRound: false,      // suppress tap-to-continue on the last round
       game: {
@@ -3482,6 +3493,9 @@
         hintShown: false
       };
       $("roundBadge").textContent = `Round ${payload.round}/${payload.totalRounds}`;
+      // The pick is locked in — nothing left to skip.
+      state.choosing = null;
+      updateChooserSkipBtn();
 
       let ind = document.querySelector(".chooser-indicator");
       if (!ind) {
@@ -3962,6 +3976,8 @@
       showToast(`${hostName} is now the host.`);
       if (state.screen === "lobby") renderLobby();
       $("endRoundBtn").classList.toggle("hidden", !state.isHost);
+      // A promotion mid-pick should hand the new host the skip control right away.
+      updateChooserSkipBtn();
     });
 
     socket.on("room:kicked", ({ reason }) => {
@@ -4125,6 +4141,25 @@
         renderWaitStandings(standings);
         resetChooserCountdown();
       }
+      // Remembered so the host-skip button can be re-evaluated if the host
+      // changes while this screen is up.
+      state.choosing = { chooserId, chooserName, hasOthers };
+      updateChooserSkipBtn();
+    }
+
+    // The host-only "skip this picker" control. Only meaningful while someone
+    // ELSE is picking and there's another player to hand the turn to — the host
+    // picking their own word already has the pass button on the pick panel.
+    function updateChooserSkipBtn() {
+      const btn = $("chooserSkipBtn");
+      if (!btn) return;
+      const c = state.choosing;
+      const show = Boolean(c) && state.isHost && c.hasOthers && c.chooserId !== state.playerId;
+      btn.classList.toggle("hidden", !show);
+      if (show) {
+        btn.disabled = false;
+        $("chooserSkipName").textContent = c.chooserName || "this player";
+      }
     }
 
     // The pick countdown stays hidden until the first server tick arrives, so it
@@ -4252,12 +4287,29 @@
       });
     });
 
-    // ── A chooser ran out of time or handed off — the turn moved on ──
+    // ── A chooser ran out of time, handed off, or was skipped by the host ──
     socket.on("game:chooserPassed", ({ skippedName, reason }) => {
       const who = skippedName || "The picker";
-      showToast(reason === "voluntary"
-        ? `${who} passed the pick to the next player.`
-        : `${who} ran out of time — the pick moves to the next player.`);
+      if (reason === "voluntary") {
+        showToast(`${who} passed the pick to the next player.`);
+      } else if (reason === "host") {
+        showToast(`The host skipped ${who} — the pick moves to the next player.`);
+      } else {
+        showToast(`${who} ran out of time — the pick moves to the next player.`);
+      }
+    });
+
+    // ── Host skips the current picker ─────────────────────────────
+    $("chooserSkipBtn").addEventListener("click", () => {
+      const btn = $("chooserSkipBtn");
+      btn.disabled = true;
+      socket.emit("game:skipChooser", {}, res => {
+        if (!res || !res.ok) {
+          btn.disabled = false;
+          if (res && res.error) showToast(res.error);
+        }
+        // On success the server reassigns and everyone gets game:choosingWord.
+      });
     });
 
     // ── Chooser hands the turn off because they're busy ───────────

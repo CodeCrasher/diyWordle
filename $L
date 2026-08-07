@@ -1,0 +1,8 @@
+before
+{"ts":"2026-08-07T01:39:26.529Z","level":"warn","event":"missing_mw_api_key","message":"MW_API_KEY not set — word validation falls back to fail-open. Get a free key at https://dictionaryapi.com/register/index"}
+{"ts":"2026-08-07T01:39:26.534Z","level":"warn","event":"persistence_disabled","message":"REDIS_URL not set — room state is in-memory only and will not survive a restart/redeploy."}
+{"ts":"2026-08-07T01:39:26.536Z","level":"warn","event":"mail_not_configured","message":"No RESEND_API_KEY or SMTP_HOST set — magic-link emails cannot be sent. Set one to enable email sign-in."}
+{"ts":"2026-08-07T01:39:26.536Z","level":"info","event":"host_auth_policy","requireHostAuth":false,"mailConfigured":false}
+{"ts":"2026-08-07T01:39:26.537Z","level":"warn","event":"practice_anthropic_disabled","message":"ANTHROPIC_API_KEY not set — Play vs AI uses the fallback word lists."}
+after
+still alive

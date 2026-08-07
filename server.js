@@ -814,8 +814,9 @@ function startRoundRobin(room) {
 
 // Hand the pick to the NEXT player in the queue without rebuilding the order or
 // resetting to the top — safe to call mid-cycle (including round 0). Triggered
-// when the chooser runs out of pick time or hands off voluntarily. The skipped
-// player keeps their slot and is asked again on the next full rotation.
+// when the chooser runs out of pick time, hands off voluntarily, or is skipped
+// by the host. The skipped player keeps their slot and is asked again on the
+// next full rotation.
 function passChooserTurn(room, skippedName, reason = "timeout") {
   if (room.status !== "choosing" || !room.waitingForWord) return;
   clearChooserTimer(room);
@@ -825,6 +826,10 @@ function passChooserTurn(room, skippedName, reason = "timeout") {
     skippedName: skippedName || "The picker",
     reason
   });
+
+  // A host skip is a deliberate call, not the room going idle — it clears the
+  // all-idle guard so the next picker still gets a live pick clock.
+  if (reason === "host") room.chooserSkips = 0;
 
   const queueLen = room.playerOrder.filter(id => room.players.has(id)).length;
   // All-idle safeguard: a full cycle of consecutive timeouts with nobody
@@ -1398,6 +1403,29 @@ io.on("connection", (socket) => {
     }
     const me = room.players.get(socket.id);
     passChooserTurn(room, me ? me.name : "The picker", "voluntary");
+    callback?.({ ok: true });
+  });
+
+  // The host moves a stalled picker along without waiting for the pick clock.
+  // Same rotation semantics as a timeout or a voluntary pass: the skipped player
+  // keeps their slot and is asked again on the next full cycle.
+  socket.on("game:skipChooser", (payload = {}, callback) => {
+    const room = getRoomForSocket(socket);
+    if (!room) return callback?.({ ok: false, error: "Not in a room." });
+    if (!assertHost(socket, room)) {
+      return callback?.({ ok: false, error: "Only the host can skip the picker." });
+    }
+    if (room.status !== "choosing" || !room.waitingForWord) {
+      return callback?.({ ok: false, error: "There's no pick to skip right now." });
+    }
+    if (room.playerOrder.filter(id => room.players.has(id)).length <= 1) {
+      return callback?.({ ok: false, error: "There's no one else to pass to." });
+    }
+    const chooser = room.players.get(room.currentChooserId);
+    const skippedName = chooser ? chooser.name : "The picker";
+    // A host skipping their own turn is just a pass — keep the wording honest.
+    const reason = socket.id === room.currentChooserId ? "voluntary" : "host";
+    passChooserTurn(room, skippedName, reason);
     callback?.({ ok: true });
   });
 
