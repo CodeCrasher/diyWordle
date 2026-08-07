@@ -748,6 +748,10 @@ function finishRound(room, reason = "complete") {
     reason,
     word: room.currentRoundConfig.word,
     definition: room.currentRoundConfig.definition || "",
+    // The round is over and the answer itself is in this payload, so the hint
+    // has nothing left to protect — everyone finally gets to see what the picker
+    // wrote, including the players who never paid to reveal it.
+    hint: room.currentRoundConfig.hint || "",
     round: room.currentRound,
     totalRounds: room.config.totalRounds,
     chooserId: room.currentChooserId,

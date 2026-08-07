@@ -961,6 +961,26 @@
       line-height: 1.45;
       text-align: left;
     }
+    /* The picker's hint, shown to everyone at round end. Deliberately styled
+       like the 💡 hint popup rather than the dictionary meaning, so it reads as
+       "what the picker wrote" and not "what the word means". */
+    .appreciation-hint {
+      margin: 0 0 12px;
+      padding: 8px 12px;
+      border-left: 3px solid var(--yellow);
+      background: color-mix(in srgb, var(--yellow) 16%, transparent);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.9rem;
+      line-height: 1.45;
+      text-align: left;
+    }
+    .round-end-hint {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
 
     @keyframes pulse {
       0%, 100% { transform: scale(1); }
@@ -2614,6 +2634,8 @@
             <div>
               <h2>Round Complete</h2>
               <p class="subtitle" id="roundEndSubtitle">Round complete.</p>
+              <!-- Repeated here so the hint survives dismissing the overlay. -->
+              <p class="round-end-hint hidden" id="roundEndHint"></p>
             </div>
             <span class="badge" id="wordReveal">WORD</span>
           </div>
@@ -2710,6 +2732,8 @@
       <p id="appreciationHeading" class="solve-heading"></p>
       <div class="appreciation-word">The word was <span id="appreciationWord">?????</span></div>
       <p id="appreciationMeaning" class="appreciation-meaning hidden"></p>
+      <!-- The picker's hint, revealed to the whole room once the round is over. -->
+      <p id="appreciationHint" class="appreciation-hint hidden"></p>
       <p id="appreciationPun" class="solve-pun"></p>
       <button id="appreciationContinueBtn" class="btn primary solve-continue" type="button">See leaderboard →</button>
     </div>
@@ -3046,6 +3070,18 @@
       } else {
         meaningEl.textContent = "";
         meaningEl.classList.add("hidden");
+      }
+
+      // The picker's hint, now visible to the whole room — including everyone
+      // who never paid to reveal it. Hidden entirely when no hint was written.
+      const hintEl = $("appreciationHint");
+      const hintText = (payload.hint || "").trim();
+      if (hintText) {
+        hintEl.textContent = `💡 ${isChooser ? "Your hint" : "The hint"}: “${hintText}”`;
+        hintEl.classList.remove("hidden");
+      } else {
+        hintEl.textContent = "";
+        hintEl.classList.add("hidden");
       }
 
       if (isChooser) {
@@ -3934,6 +3970,12 @@
       $("roundEndSubtitle").textContent =
         `Round ${payload.round}/${payload.totalRounds} — ${reasonText}`;
       $("wordReveal").textContent = payload.word;
+
+      // Keep the hint on screen after the appreciation overlay is dismissed.
+      const reHint = $("roundEndHint");
+      const reHintText = (payload.hint || "").trim();
+      reHint.textContent = reHintText ? `💡 Hint was: “${reHintText}”` : "";
+      reHint.classList.toggle("hidden", !reHintText);
       $("roundLeaderboard").innerHTML = payload.leaderboard.map((player, index) => {
         const isChooser = (player.isChooser === true) ||
                           (player.id === payload.chooserId);
