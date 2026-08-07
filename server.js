@@ -318,8 +318,22 @@ function cacheWord(key, value) {
   wordCache.set(key, value);
 }
 
+// Display names accept what real names actually contain: any Unicode letter
+// (so accents and non-Latin scripts work), digits, and the separators that show
+// up in names — space, hyphen, apostrophe, period. Deliberately still excludes
+// emoji, underscores and symbols, which read as impersonation/spoofing vectors
+// more than names. Length is counted AFTER trimming, so "  Al  " is still short.
+// Names are escaped at every render site, so this is a display rule, not a
+// safety boundary.
+const DISPLAY_NAME_RE = /^[\p{L}\p{M}0-9][\p{L}\p{M}0-9 '.-]{1,14}[\p{L}\p{M}0-9.]$/u;
+
 function isDisplayName(name) {
-  return /^[a-zA-Z0-9]{3,16}$/.test(String(name || "").trim());
+  const trimmed = String(name || "").trim();
+  // Reject a repeated separator ("A  B", "A--B") so a name can't be padded into
+  // something visually misleading. Different separators in sequence are fine —
+  // "J. Smith" is a real name.
+  if (/([ '.-])\1/.test(trimmed)) return false;
+  return DISPLAY_NAME_RE.test(trimmed);
 }
 
 function makeRoomCode() {
@@ -1249,7 +1263,13 @@ io.on("connection", (socket) => {
     if (REQUIRE_HOST_AUTH && !socket.data.user) {
       return callback?.({ ok: false, needAuth: true, error: "Please sign in to create a room." });
     }
-    const name = isDisplayName(payload.name) ? payload.name.trim() : "Host";
+    // Reject a bad host name instead of silently renaming them to "Host" — the
+    // old fallback meant any name with a space, accent or symbol vanished with
+    // no feedback at all. Same rule and wording as room:join.
+    const name = String(payload.name || "").trim();
+    if (!isDisplayName(name)) {
+      return callback?.({ ok: false, error: "Name must be 3-16 characters — letters, numbers, spaces, hyphens or apostrophes." });
+    }
     const roundTime = Number(payload.roundTime);
 
     if (![60, 120, 180, 300].includes(roundTime)) return callback?.({ ok: false, error: "Invalid round timer." });
@@ -1318,7 +1338,7 @@ io.on("connection", (socket) => {
     const room = rooms.get(code);
 
     if (!room) return callback?.({ ok: false, error: "Room not found." });
-    if (!isDisplayName(name)) return callback?.({ ok: false, error: "Name must be 3-16 alphanumeric characters." });
+    if (!isDisplayName(name)) return callback?.({ ok: false, error: "Name must be 3-16 characters — letters, numbers, spaces, hyphens or apostrophes." });
 
     // Mid-game: only RETURNING players may re-enter — reclaim a disconnected slot
     // matched by name, preserving their score, board, and chooser turn. New names
