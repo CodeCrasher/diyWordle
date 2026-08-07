@@ -607,6 +607,42 @@ function getRoundProgress(room) {
     });
 }
 
+// PICKER-ONLY spectator feed. The word-picker can't guess, so they get to watch
+// the round they created unfold tile by tile — every guesser's letters and
+// colours, live. Safe to hand over the letters here ONLY because the recipient
+// already knows the answer; this payload must never reach anyone else (see
+// emitProgress), or a solved player could read a struggling player's board.
+function getSpectatorBoards(room) {
+  return Array.from(room.players.values())
+    .filter((p) => p.active && p.id !== room.currentChooserId)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      connected: p.connected,
+      solved: p.solved,
+      score: p.roundScore,
+      time: p.solvedAt,
+      usedHint: p.usedHint,
+      rows: p.guesses.map((g) => ({ guess: g.guess, feedback: g.feedback }))
+    }))
+    .sort((a, b) => {
+      if (a.solved !== b.solved) return a.solved ? -1 : 1;            // done first
+      if (a.solved && b.solved) return (a.time ?? Infinity) - (b.time ?? Infinity);
+      if (a.rows.length !== b.rows.length) return b.rows.length - a.rows.length; // furthest along first
+      return a.name.localeCompare(b.name);
+    });
+}
+
+// The whole live-spectator broadcast in one call: letter-free progress to the
+// room, and the full tile-by-tile boards to the picker alone.
+function emitProgress(room) {
+  io.to(room.code).emit("game:guessProgress", { progress: getRoundProgress(room) });
+  const pickerSocket = io.sockets.sockets.get(room.currentChooserId);
+  if (pickerSocket) {
+    pickerSocket.emit("game:spectatorBoards", { boards: getSpectatorBoards(room) });
+  }
+}
+
 // Snapshot of the CURRENT round from one player's perspective, used to rebuild
 // their game screen after a hard refresh mid-round. Includes THIS player's own
 // guesses + feedback (so the board can be redrawn) plus their solved/hint state.
@@ -627,6 +663,9 @@ function getActiveRoundSnapshot(room, player) {
     chooserName: chooser ? chooser.name : "",
     hintAvailable: Boolean(room.currentRoundConfig.hint),
     progress: getRoundProgress(room),
+    // The picker's spectator boards survive a refresh too — gated on them
+    // actually being the picker, so a rejoining guesser never receives letters.
+    boards: player.id === room.currentChooserId ? getSpectatorBoards(room) : null,
     // Player-specific replay data:
     guesses: player.guesses.map((g) => ({ guess: g.guess, feedback: g.feedback })),
     solved: player.solved,
@@ -794,6 +833,13 @@ function startGameRound(room, roundConfig = null) {
     players: getPublicPlayers(room),
     progress: getRoundProgress(room)
   });
+
+  // Seed the picker's spectator view with the (still empty) boards so the grid
+  // frame is on screen before the first guess lands.
+  const pickerSocket = io.sockets.sockets.get(room.currentChooserId);
+  if (pickerSocket) {
+    pickerSocket.emit("game:spectatorBoards", { boards: getSpectatorBoards(room) });
+  }
 
   io.to(room.code).emit("game:timerTick", { remaining: room.config.roundTime });
   startRoundTimer(room);
@@ -1509,9 +1555,9 @@ io.on("connection", (socket) => {
         });
       }
 
-      // Live spectator feed: every guess updates the attempt counts the picker
-      // (and solved players) are watching. Never includes the guessed letters.
-      io.to(room.code).emit("game:guessProgress", { progress: getRoundProgress(room) });
+      // Live spectator feed: every guess updates the attempt counts the room is
+      // watching, and redraws the picker's tile-by-tile view of every board.
+      emitProgress(room);
 
       callback?.({
         ok: true,
@@ -1558,8 +1604,8 @@ io.on("connection", (socket) => {
 
     // Let the word-picker (and anyone already done) see who took the hint right
     // away, instead of waiting for this player's next guess to refresh the feed.
-    // The hint TEXT never rides along — getRoundProgress only carries the flag.
-    io.to(room.code).emit("game:guessProgress", { progress: getRoundProgress(room) });
+    // The hint TEXT never rides along — only the flag.
+    emitProgress(room);
   });
 
   // Host force-ends the active round.

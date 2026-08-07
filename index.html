@@ -1823,6 +1823,79 @@
     #gameScreen .game-main.spectating .game-meta { width: min(520px, 100%); align-self: center; }
     #gameScreen .game-main.spectating #roundProgress { margin-top: auto; width: min(520px, 100%); align-self: center; }
     #gameScreen .game-main.spectating .chooser-indicator { margin-bottom: auto; }
+    /* margin-top:auto here pairs with the indicator's margin-bottom:auto below,
+       so the spectator block sits centred instead of pinned to the top. */
+    #gameScreen .game-main.spectating #spectatorBoards {
+      width: min(760px, 100%); align-self: center; margin-top: auto;
+    }
+
+    /* ── Picker's live spectator boards ──────────────────────────
+       The picker can't guess, so their dead board is replaced by a card per
+       guesser showing that player's grid filling in, tile by tile. */
+    /* auto-fit (not auto-fill) so a small room's cards grow to fill the row
+       instead of huddling left. The track max stays 1fr — a definite max would
+       make the browser count tracks by THAT, collapsing mobile to one column —
+       so the size cap lives on the card instead. */
+    .spec-boards {
+      display: grid; gap: 12px; justify-content: center;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    }
+    .spec-card {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 10px;
+      display: flex; flex-direction: column; gap: 8px;
+      width: 100%; max-width: 240px; justify-self: center;
+      transition: border-color 200ms ease, box-shadow 200ms ease;
+    }
+    .spec-card--solved { border-color: var(--green); }
+    /* One green away — the whole point of watching. */
+    .spec-card--close {
+      border-color: var(--yellow);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--yellow) 25%, transparent);
+    }
+    .spec-card--off { opacity: 0.5; }
+    .spec-head {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.78rem; font-weight: 800;
+    }
+    .spec-name {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .spec-status { color: var(--muted); font-weight: 700; font-size: 0.72rem; }
+    .spec-status--solved { color: var(--green); }
+    .spec-badge { font-size: 0.68rem; }
+    .spec-grid { display: flex; flex-direction: column; gap: 3px; }
+    .spec-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
+    .spec-tile {
+      aspect-ratio: 1; border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-display);
+      font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+      background: transparent; color: var(--ink);
+      box-shadow: inset 0 0 0 1.5px var(--line);
+    }
+    .spec-tile.green  { background: var(--green);  color: #fff;     box-shadow: none; }
+    .spec-tile.yellow { background: var(--yellow); color: #4a3411;  box-shadow: none; }
+    .spec-tile.gray   { background: var(--gray);   color: #fff;     box-shadow: none; }
+    /* Newest row lands with a small pop so the picker sees WHERE the change was. */
+    .spec-row--new .spec-tile { animation: specPop 260ms ease backwards; }
+    .spec-row--new .spec-tile:nth-child(2) { animation-delay: 40ms; }
+    .spec-row--new .spec-tile:nth-child(3) { animation-delay: 80ms; }
+    .spec-row--new .spec-tile:nth-child(4) { animation-delay: 120ms; }
+    .spec-row--new .spec-tile:nth-child(5) { animation-delay: 160ms; }
+    @keyframes specPop {
+      0%   { transform: scale(0.6); opacity: 0; }
+      60%  { transform: scale(1.08); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .spec-row--new .spec-tile { animation: none; }
+    }
+    .spec-empty {
+      grid-column: 1 / -1; text-align: center;
+      color: var(--muted); font-size: 0.85rem; padding: 20px 0;
+    }
     .error-msg {
       color: var(--danger); font-size: 0.85rem; font-weight: 600;
     }
@@ -2494,6 +2567,8 @@
               <div class="timer" id="timerText">3:00</div>
             </div>
             <div class="round-progress hidden" id="roundProgress"></div>
+            <!-- Picker-only: live tile-by-tile view of everyone else's board. -->
+            <div class="spec-boards hidden" id="spectatorBoards"></div>
             <div class="board" id="board"></div>
             <div class="hint-box" id="hintBox">No hint this round.</div>
             <button class="btn hint-btn hidden" id="hintBtn">Reveal Hint</button>
@@ -3482,6 +3557,7 @@
         remaining: payload.roundTime,
         hintAvailable: payload.hintAvailable,
         maxGuesses: payload.maxGuesses,
+        wordLength: payload.wordLength,
         currentRow: 0,
         currentCol: 0,
         rows: Array.from({ length: payload.maxGuesses }, () => Array(payload.wordLength).fill("")),
@@ -3523,11 +3599,15 @@
       }
       $("endRoundBtn").classList.toggle("hidden", !state.isHost);
       // The picker can't guess, so swap their dead board/keyboard for the live
-      // spectator panel. Guessers keep their board untouched (zero layout risk)
+      // spectator boards. Guessers keep their board untouched (zero layout risk)
       // and watch via the side panel on desktop. Toggled every round, so a player
       // who picked last round gets their board back when they're guessing.
       const youChose = payload.chooserId === state.playerId;
-      $("roundProgress").classList.toggle("hidden", !youChose);
+      // The picker's cards carry name + attempts + solve state, so the dot-list
+      // summary would just be saying the same thing twice.
+      $("roundProgress").classList.add("hidden");
+      resetSpectatorBoards();
+      $("spectatorBoards").classList.toggle("hidden", !youChose);
       ["board", "keyboard", "hintBox", "mobileTapHint"].forEach((id) =>
         $(id).classList.toggle("hidden", youChose));
       // The reveal-hint button is only for guessers, and only when a hint exists.
@@ -3564,6 +3644,7 @@
         remaining,
         hintAvailable: rs.hintAvailable,
         maxGuesses: rs.maxGuesses,
+        wordLength: rs.wordLength,
         currentRow: guesses.length,
         currentCol: 0,
         rows: Array.from({ length: rs.maxGuesses }, () => Array(rs.wordLength).fill("")),
@@ -3622,7 +3703,12 @@
       $("endRoundBtn").classList.toggle("hidden", !state.isHost);
 
       // Picker spectator layout — identical toggles to resetGameBoard.
-      $("roundProgress").classList.toggle("hidden", !youChose);
+      $("roundProgress").classList.add("hidden");
+      resetSpectatorBoards();
+      $("spectatorBoards").classList.toggle("hidden", !youChose);
+      // Boards ride along in the snapshot for the picker, so a mid-round refresh
+      // rebuilds the full spectator view rather than waiting on the next guess.
+      if (youChose && rs.boards) renderSpectatorBoards(rs.boards);
       ["board", "keyboard", "hintBox", "mobileTapHint"].forEach((id) =>
         $(id).classList.toggle("hidden", youChose));
       $("hintBtn").classList.toggle("hidden", youChose || !rs.hintAvailable || Boolean(rs.usedHint && rs.hint));
@@ -4230,6 +4316,75 @@
       });
       updateSolveCount(progress);
     }
+
+    // ── Picker's live spectator boards ────────────────────────────
+    // The word-picker watches every guesser's grid fill in, letter by letter.
+    // Only the picker's client ever receives this payload (server gates it on
+    // currentChooserId), because it carries the actual guessed letters.
+    // Tracks the previous row count per player so a freshly-landed guess can be
+    // animated without re-popping every tile on the card.
+    let specRowCounts = {};
+
+    function resetSpectatorBoards() {
+      specRowCounts = {};
+      const wrap = $("spectatorBoards");
+      if (wrap) wrap.innerHTML = "";
+    }
+
+    function renderSpectatorBoards(boards) {
+      const wrap = $("spectatorBoards");
+      if (!wrap) return;
+      if (!Array.isArray(boards) || !boards.length) {
+        wrap.innerHTML = `<p class="spec-empty">No one else is guessing this round.</p>`;
+        return;
+      }
+      const max = state.game.maxGuesses || 6;
+      const len = state.game.wordLength || 5;
+
+      wrap.innerHTML = boards.map((b) => {
+        const rows = Array.isArray(b.rows) ? b.rows : [];
+        const prev = specRowCounts[b.id] ?? rows.length; // first paint never pops
+        const last = rows[rows.length - 1];
+        // "One away" = four greens and not yet solved. The near-miss is the
+        // moment worth watching for, so the whole card reacts.
+        const greens = last ? last.feedback.filter((f) => f === "green").length : 0;
+        const close = !b.solved && greens === len - 1;
+
+        const grid = Array.from({ length: max }, (_, r) => {
+          const row = rows[r];
+          const isNew = row && r >= prev;
+          const tiles = Array.from({ length: len }, (_, c) => {
+            if (!row) return `<span class="spec-tile"></span>`;
+            return `<span class="spec-tile ${row.feedback[c]}">${escapeHtml(row.guess[c] || "")}</span>`;
+          }).join("");
+          return `<div class="spec-row${isNew ? " spec-row--new" : ""}">${tiles}</div>`;
+        }).join("");
+
+        const status = b.solved
+          ? `<span class="spec-status spec-status--solved">✓ ${b.score}</span>`
+          : `<span class="spec-status">${rows.length}/${max}</span>`;
+        const hint = b.usedHint ? `<span class="spec-badge" title="Used your hint">💡</span>` : "";
+        const cls = [
+          "spec-card",
+          b.solved ? "spec-card--solved" : "",
+          close ? "spec-card--close" : "",
+          b.connected === false ? "spec-card--off" : ""
+        ].filter(Boolean).join(" ");
+
+        specRowCounts[b.id] = rows.length;
+
+        return `<div class="${cls}">
+          <div class="spec-head">
+            ${avatarHtml(b.name, b.id || b.name, false, 22)}
+            <span class="spec-name">${escapeHtml(b.name)}</span>
+            ${hint}${status}
+          </div>
+          <div class="spec-grid">${grid}</div>
+        </div>`;
+      }).join("");
+    }
+
+    socket.on("game:spectatorBoards", ({ boards }) => renderSpectatorBoards(boards));
 
     // Fix 17: live "X of N solved" visibility for a player who's already done.
     // Derived from the same progress feed every client already receives — no new
